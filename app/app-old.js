@@ -8,29 +8,62 @@
  */
 const Ajv = require("ajv");
 const Orbit = require("./orbit");
-const WebHooks = require("node-webhooks");
+const mqtt = require("mqtt");
 require("dotenv").config();
 
+var MCLIENT_ONLINE = false;
 let ts = () => new Date().toISOString();
 
 const oClient = new Orbit();
 
-const wClient = new WebHooks({
-  db: {},
+const mClient = mqtt.connect(process.env.MQTT_BROKER_ADDRESS, {
+  username: process.env.MQTT_USER,
+  password: process.env.MQTT_PASSWORD,
+  keepalive: 10000,
+  connectTimeout: 120000,
+  reconnectPeriod: 500,
+  clientId: "bhyve-mqtt_" + Math.random().toString(16).substr(2, 8),
 });
 
-// Setup webhook location
-wClient.add("stationStarted", process.env.STATION_STARTED_WEBHOOK_URL);
+const handleClientError = function (err) {
+  console.error(`${ts()} - connection error to broker, exiting`);
+  console.error("    " + err);
+  setTimeout(() => {
+    process.exit();
+  }, 10000);
+};
 
-// connect to oClient:
-oClient.connect({
-  email: process.env.ORBIT_EMAIL,
-  password: process.env.ORBIT_PASSWORD,
+mClient.on("error", handleClientError);
+
+mClient.on("offline", function () {
+  console.log(`${ts()} - BROKER OFFLINE`);
+  MCLIENT_ONLINE = false;
+});
+
+let publishHandler = function (err) {
+  if (err) {
+    return console.error(err);
+  }
+  // console.log(`${ts()} - mqtt publish`)
+};
+
+const oConnect = () => {
+  oClient.connect({
+    email: process.env.ORBIT_EMAIL,
+    password: process.env.ORBIT_PASSWORD,
+  });
+};
+
+// connect to oClient once mqtt is up:
+mClient.on("connect", function () {
+  console.log(`${ts()} - mqtt connected`);
+  MCLIENT_ONLINE = true;
+  oConnect();
 });
 
 // once we get a token, publish alive message
 oClient.on("token", (token) => {
-  // mClient.publish("bhyve/alive", ts(), publishHandler);
+  if (MCLIENT_ONLINE) mClient.publish("bhyve/alive", ts(), publishHandler);
   console.log(`${ts()} - Token: ${token}`);
 });
 
@@ -55,43 +88,46 @@ let subscribeHandler = function (topic) {
 };
 
 oClient.on("devices", (data) => {
-  let devices = [];
-  // subscribeHandler(`bhyve/device/refresh`);
-  for (let prop in data) {
-    if (data.hasOwnProperty(prop)) {
-      let deviceId = data[prop].id;
-      devices.push(deviceId);
-      console.log(`${ts()} - devices: ` + JSON.stringify(data[prop]));
-      if (typeof data[prop].status.watering_status === "object") {
-        // mClient.publish(
-        //   `bhyve/device/${deviceId}/status`,
-        //   JSON.stringify(data[prop].status.watering_status)
-        // );
-      } else {
-        // mClient.publish(`bhyve/device/${deviceId}/status`, null);
-      }
-      console.log(
-        `${ts()} - status: ` + JSON.stringify(data[prop].status.watering_status)
-      );
-      // subscribeHandler(`bhyve/device/${deviceId}/refresh`);
-      // mClient.publish(
-      //   `bhyve/device/${deviceId}/details`,
-      //   JSON.stringify(data[prop]),
-      //   { retain: true }
-      // );
-      for (let zone in data[prop].zones) {
-        let station = data[prop].zones[zone].station;
-        // mClient.publish(
-        //   `bhyve/device/${deviceId}/zone/${station}`,
-        //   JSON.stringify(data[prop].zones[zone])
-        // );
-        // subscribeHandler(`bhyve/device/${deviceId}/zone/${station}/set`);
+  if (MCLIENT_ONLINE) {
+    let devices = [];
+    subscribeHandler(`bhyve/device/refresh`);
+    for (let prop in data) {
+      if (data.hasOwnProperty(prop)) {
+        let deviceId = data[prop].id;
+        devices.push(deviceId);
+        console.log(`${ts()} - devices: ` + JSON.stringify(data[prop]));
+        if (typeof data[prop].status.watering_status === "object") {
+          mClient.publish(
+            `bhyve/device/${deviceId}/status`,
+            JSON.stringify(data[prop].status.watering_status)
+          );
+        } else {
+          mClient.publish(`bhyve/device/${deviceId}/status`, null);
+        }
+        console.log(
+          `${ts()} - status: ` +
+            JSON.stringify(data[prop].status.watering_status)
+        );
+        subscribeHandler(`bhyve/device/${deviceId}/refresh`);
+        mClient.publish(
+          `bhyve/device/${deviceId}/details`,
+          JSON.stringify(data[prop]),
+          { retain: true }
+        );
+        for (let zone in data[prop].zones) {
+          let station = data[prop].zones[zone].station;
+          mClient.publish(
+            `bhyve/device/${deviceId}/zone/${station}`,
+            JSON.stringify(data[prop].zones[zone])
+          );
+          subscribeHandler(`bhyve/device/${deviceId}/zone/${station}/set`);
+        }
       }
     }
-  }
-  // mClient.publish(`bhyve/devices`, JSON.stringify(devices));
+    mClient.publish(`bhyve/devices`, JSON.stringify(devices));
 
-  oClient.connectStream();
+    oClient.connectStream();
+  }
 });
 
 const parseMessage = (topic, message) => {
@@ -182,16 +218,16 @@ const parseMessage = (topic, message) => {
   }
 };
 
-// mClient.on("message", (topic, message) => {
-//   // console.log('topic: ' + topic + ' message: ' + message.toString())
-//   try {
-//     parseMessage(topic, message);
-//   } catch (e) {
-//     console.log(`${ts()} parseMessage ERROR: JSONvalidate failed: `);
-//     console.log("    validation error: " + e);
-//     console.log("    client message: " + message.toString());
-//   }
-// });
+mClient.on("message", (topic, message) => {
+  // console.log('topic: ' + topic + ' message: ' + message.toString())
+  try {
+    parseMessage(topic, message);
+  } catch (e) {
+    console.log(`${ts()} parseMessage ERROR: JSONvalidate failed: `);
+    console.log("    validation error: " + e);
+    console.log("    client message: " + message.toString());
+  }
+});
 
 oClient.on("error", (err) => {
   console.log(`${ts()} - Orbit Error: ` + err);
@@ -215,33 +251,25 @@ const parseMode = (data) => {
   }
 };
 
-const stationStarted = (data) => {
-  console.log(`${ts()} - Watering started at station ${data.current_station}`);
-  const obj = { value1: data.current_station };
-  console.log(obj);
-  wClient.trigger("stationStarted", obj);
-};
-
 oClient.on("message", (data) => {
   const json = JSON.stringify(data);
   console.log(`${ts()} - message: ` + json);
   let event = data.event;
-  // if (MCLIENT_ONLINE) {
-  if (data.device_id) {
-    // mClient.publish(`bhyve/device/${data.device_id}/message`, json);
-  } else {
-    // mClient.publish(`bhyve/message`, json);
+  if (MCLIENT_ONLINE) {
+    if (data.device_id) {
+      mClient.publish(`bhyve/device/${data.device_id}/message`, json);
+    } else {
+      mClient.publish(`bhyve/message`, json);
+    }
   }
-  // }
   console.log(`${ts()} - event: ` + event);
 
   switch (event) {
     case "change_mode":
       parseMode(data);
       break;
-    case "watering_in_progress_notification":
-      stationStarted(data);
-      break;
+    //    case 'watering_in_progress_notification':
+    //      break
 
     default:
       console.log(`${ts()} - message: ` + JSON.stringify(data));
