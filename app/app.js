@@ -19,6 +19,8 @@ const wClient = new WebHooks({
   db: {},
 });
 
+let zones = [];
+
 // Setup webhook location
 wClient.add("stationStarted", process.env.STATION_STARTED_WEBHOOK_URL);
 
@@ -79,14 +81,15 @@ oClient.on("devices", (data) => {
       //   JSON.stringify(data[prop]),
       //   { retain: true }
       // );
-      for (let zone in data[prop].zones) {
-        let station = data[prop].zones[zone].station;
-        // mClient.publish(
-        //   `bhyve/device/${deviceId}/zone/${station}`,
-        //   JSON.stringify(data[prop].zones[zone])
-        // );
-        // subscribeHandler(`bhyve/device/${deviceId}/zone/${station}/set`);
-      }
+      zones = [...data[prop].zones];
+      // for (let zone in data[prop].zones) {
+      // let station = data[prop].zones[zone].station;
+      // mClient.publish(
+      //   `bhyve/device/${deviceId}/zone/${station}`,
+      //   JSON.stringify(data[prop].zones[zone])
+      // );
+      // subscribeHandler(`bhyve/device/${deviceId}/zone/${station}/set`);
+      // }
     }
   }
   // mClient.publish(`bhyve/devices`, JSON.stringify(devices));
@@ -216,8 +219,20 @@ const parseMode = (data) => {
 };
 
 const stationStarted = (data) => {
-  console.log(`${ts()} - Watering started at station ${data.current_station}`);
-  const obj = { value1: data.current_station };
+  console.log(data);
+  const zone = zones[data.current_station];
+  const stationName = zone && zone.name;
+  const stationUrl = zone && zone.image_url;
+  console.log(
+    `${ts()} - Watering started at station ${
+      data.current_station
+    } (${stationName})`
+  );
+  const obj = {
+    value1: stationName || data.current_station + " (name unknown)",
+    value2: stationUrl,
+    value3: data.run_time,
+  };
   console.log(obj);
   wClient.trigger("stationStarted", obj);
 };
