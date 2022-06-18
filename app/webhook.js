@@ -4,7 +4,9 @@ const axios = require("axios");
 
 class WebHooks {
 
-  endpoints = {};
+  constructor() {
+    this.endpoints = {};
+  }
 
   add(name, url, method = "POST") {
     this.endpoints[name] = {
