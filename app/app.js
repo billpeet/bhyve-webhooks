@@ -22,9 +22,6 @@ let zones = [];
 // Setup webhook location
 wClient.add("stationStarted", process.env.STATION_STARTED_WEBHOOK_URL, process.env.STATION_STARTED_WEBHOOK_METHOD);
 
-const res = wClient.trigger("stationStarted", { a: "asdf", b: "fdas" });
-res.then(r => console.log(r));
-
 // connect to oClient:
 oClient.connect({
   email: process.env.ORBIT_EMAIL,
