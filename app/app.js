@@ -8,21 +8,22 @@
  */
 const Ajv = require("ajv");
 const Orbit = require("./orbit");
-const WebHooks = require("node-webhooks");
+const WebHooks = require("./webhook");
 require("dotenv").config();
 
 let ts = () => new Date().toISOString();
 
 const oClient = new Orbit();
 
-const wClient = new WebHooks({
-  db: {},
-});
+const wClient = new WebHooks();
 
 let zones = [];
 
 // Setup webhook location
-wClient.add("stationStarted", process.env.STATION_STARTED_WEBHOOK_URL);
+wClient.add("stationStarted", process.env.STATION_STARTED_WEBHOOK_URL, process.env.STATION_STARTED_WEBHOOK_METHOD);
+
+const res = wClient.trigger("stationStarted", { a: "asdf", b: "fdas" });
+res.then(r => console.log(r));
 
 // connect to oClient:
 oClient.connect({
